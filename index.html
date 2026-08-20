@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Guns.io</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #10131a;
+            font-family: Arial, sans-serif;
+        }
+
+        #game {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            cursor: crosshair;
+        }
+
+        #hud {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            z-index: 5;
+            pointer-events: none;
+        }
+
+        #health {
+            width: 220px;
+            height: 22px;
+            border-radius: 5px;
+            overflow: hidden;
+            background: #333;
+            border: 2px solid white;
+        }
+
+        #healthBar {
+            width: 100%;
+            height: 100%;
+            background: #31d158;
+            transition: width 0.15s;
+        }
+
+        #status {
+            margin-top: 8px;
+            color: #aaa;
+            font-size: 14px;
+        }
+
+        #crosshair {
+            position: fixed;
+            width: 20px;
+            height: 20px;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+        }
+
+        #crosshair::before,
+        #crosshair::after {
+            content: "";
+            position: absolute;
+            background: white;
+        }
+
+        #crosshair::before {
+            width: 20px;
+            height: 2px;
+            top: 9px;
+            left: 0;
+        }
+
+        #crosshair::after {
+            width: 2px;
+            height: 20px;
+            left: 9px;
+            top: 0;
+        }
+
+        #startScreen {
+            position: fixed;
+            inset: 0;
+            background: rgba(5, 8, 12, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            color: white;
+            z-index: 20;
+        }
+
+        #startScreen h1 {
+            font-size: 64px;
+            margin: 0 0 10px;
+            color: #42a5f5;
+            text-shadow: 0 0 25px #42a5f5;
+        }
+
+        #startScreen p {
+            color: #aaa;
+            margin-bottom: 25px;
+        }
+
+        #playButton {
+            border: 0;
+            padding: 15px 45px;
+            font-size: 20px;
+            font-weight: bold;
+            color: white;
+            background: #42a5f5;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        #playButton:hover {
+            background: #2196f3;
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="startScreen">
+    <h1>GUNS.IO</h1>
+    <p>Move, aim and survive.</p>
+    <button id="playButton">PLAY</button>
+</div>
+
+<div id="hud">
+    <div id="health">
+        <div id="healthBar"></div>
+    </div>
+    <div id="status">Connecting...</div>
+</div>
+
+<div id="crosshair"></div>
+
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const startScreen = document.getElementById("startScreen");
+const playButton = document.getElementById("playButton");
+const statusText = document.getElementById("status");
+const healthBar = document.getElementById("healthBar");
+const crosshair = document.getElementById("crosshair");
+
+let socket;
+let myId = null;
+let players = [];
+
+let mouseX = window.innerWidth / 2;
+let mouseY = window.innerHeight / 2;
+
+let player = {
+    x: 400,
+    y: 300,
+    angle: 0,
+    speed: 5
+};
+
+const keys = {};
+
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+
+function connect() {
+    const protocol =
+        location.protocol === "https:" ? "wss" : "ws";
+
+    const host =
+        location.hostname || "localhost";
+
+    socket = new WebSocket(
+        `${protocol}://${host}:8765`
+    );
+
+    socket.addEventListener("open", () => {
+        statusText.textContent = "Connected";
+        statusText.style.color = "#31d158";
+    });
+
+    socket.addEventListener("message", event => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "welcome") {
+            myId = data.id;
+        }
+
+        if (data.type === "players") {
+            players = data.players;
+        }
+    });
+
+    socket.addEventListener("close", () => {
+        statusText.textContent = "Disconnected";
+        statusText.style.color = "#ff453a";
+    });
+
+    socket.addEventListener("error", () => {
+        statusText.textContent = "Connection error";
+        statusText.style.color = "#ff453a";
+    });
+}
+
+
+function sendPlayerPosition() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        return;
+    }
+
+    socket.send(JSON.stringify({
+        type: "move",
+        x: player.x,
+        y: player.y,
+        angle: player.angle
+    }));
+}
+
+
+function update() {
+    let dx = 0;
+    let dy = 0;
+
+    if (keys["w"] || keys["ArrowUp"]) {
+        dy -= 1;
+    }
+
+    if (keys["s"] || keys["ArrowDown"]) {
+        dy += 1;
+    }
+
+    if (keys["a"] || keys["ArrowLeft"]) {
+        dx -= 1;
+    }
+
+    if (keys["d"] || keys["ArrowRight"]) {
+        dx += 1;
+    }
+
+    if (dx !== 0 || dy !== 0) {
+        const length = Math.sqrt(dx * dx + dy * dy);
+
+        dx /= length;
+        dy /= length;
+
+        player.x += dx * player.speed;
+        player.y += dy * player.speed;
+    }
+
+    player.x = Math.max(25, Math.min(canvas.width - 25, player.x));
+    player.y = Math.max(25, Math.min(canvas.height - 25, player.y));
+
+    player.angle = Math.atan2(
+        mouseY - player.y,
+        mouseX - player.x
+    );
+
+    sendPlayerPosition();
+}
+
+
+function drawBackground() {
+    ctx.fillStyle = "#151a22";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const gridSize = 50;
+
+    ctx.strokeStyle = "#202733";
+    ctx.lineWidth = 1;
+
+    for (let x = 0; x < canvas.width; x += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+    }
+
+    for (let y = 0; y < canvas.height; y += gridSize) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvas.width, y);
+        ctx.stroke();
+    }
+}
+
+
+function drawPlayer(p, isMe = false) {
+    ctx.save();
+
+    ctx.translate(p.x, p.y);
+
+    ctx.rotate(p.angle);
+
+    // Weapon
+    ctx.fillStyle = "#333";
+    ctx.fillRect(5, -5, 28, 10);
+
+    // Player body
+    ctx.beginPath();
+    ctx.arc(0, 0, 22, 0, Math.PI * 2);
+
+    ctx.fillStyle = isMe
+        ? "#42a5f5"
+        : (p.color || "#ff453a");
+
+    ctx.fill();
+
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#fff";
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Name
+    if (!isMe) {
+        ctx.fillStyle = "white";
+        ctx.font = "12px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("PLAYER", p.x, p.y - 30);
+    }
+}
+
+
+function draw() {
+    drawBackground();
+
+    for (const p of players) {
+        if (p.id !== myId) {
+            drawPlayer(p);
+        }
+    }
+
+    drawPlayer({
+        x: player.x,
+        y: player.y,
+        angle: player.angle,
+        color: "#42a5f5"
+    }, true);
+
+    requestAnimationFrame(draw);
+}
+
+
+function shoot() {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+        return;
+    }
+
+    socket.send(JSON.stringify({
+        type: "shoot",
+        x: player.x,
+        y: player.y,
+        angle: player.angle
+    }));
+}
+
+
+window.addEventListener("keydown", event => {
+    keys[event.key] = true;
+});
+
+window.addEventListener("keyup", event => {
+    keys[event.key] = false;
+});
+
+
+window.addEventListener("mousemove", event => {
+    mouseX = event.clientX;
+    mouseY = event.clientY;
+
+    crosshair.style.left = `${mouseX}px`;
+    crosshair.style.top = `${mouseY}px`;
+});
+
+
+window.addEventListener("mousedown", event => {
+    if (event.button === 0) {
+        shoot();
+    }
+});
+
+
+playButton.addEventListener("click", () => {
+    startScreen.style.display = "none";
+
+    player.x = canvas.width / 2;
+    player.y = canvas.height / 2;
+
+    connect();
+});
+
+
+setInterval(update, 1000 / 30);
+
+draw();
+</script>
+
+</body>
+</html>
